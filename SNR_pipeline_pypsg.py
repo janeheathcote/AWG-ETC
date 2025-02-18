@@ -2,103 +2,90 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 import pdb
+import pypsg
 
 # DIRECTORY:
 input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/'
 output_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/outputs/'
 
+psg = pypsg.PSG(timeout_seconds=30)
 
-def read_txt(filename, Plot=True):
-    """
-    Reads a PSG spectrum text file, extracts wavelength and radiance data, and optionally plots the spectrum.
+config = psg.default_config
 
-    Parameters:
-    -----------
-    filename (str) - name of PSG txt file. The filename is expected to follow the format: 
-        '<exoplanet_name>_<R>_<t>_<phase>_<unit>.txt', where:
-        - <exoplanet_name> is the name of the exoplanet.
-        - <R> is the spectral resolution.
-        - <t> is the exposure time.
-        - <phase> is the observational phase (e.g., 90 or 180).
-        - <unit> specifies whether the data is in "flux" or "photons" units.
+def call_psg(flux_units, phase, Plot=True):
 
-        If phase=180, the file contains a transit radiance column.
-        If phase=90, the transit radiance column is not present.
-        
-    Plot (bool, optional) - whether to plot the radiance spectrum (default is True).
+    # list of things that would be set
+    config['OBJECT'] = 'Exoplanet'
+    config['OBJECT-GRAVITY-UNIT'] = 'kg'
+    config['GEOMETRY'] = 'Observatory'
+    config['GENERATOR-RANGE1'] = 1.2
+    config['GENERATOR-RANGE2'] = 1.7
+    config['GENERATOR-RANGEUNIT'] = 'um'
+    config['GENERATOR-RESOLUTION'] = 30000
+    config['GENERATOR-RESOLUTIONUNIT'] = 'RP'
+    config['GENERATOR-TRANS'] = '02-01'
+    config['GENERATOR-TRANS-SHOW'] = 'Y'
+    config['GENERATOR-TRANS-APPLY'] = 'Y'
+    config['GENERATOR-NOISEFRAMES'] = 20
+    config['GENERATOR-NOISE'] = 'CCD'
+    config['GEOMETRY-ALTITUDE-UNIT'] = 'pc'
 
-    Returns:
-    --------
-    data_array (array-like) - contains wavelength, total radiance, stellar radiance,
-    exoplanet radiance, and optional transit radiance (if phase=180).
-    """
-    input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/'
-    data = []
-    
-    filename_parts = filename.split('_')
-    exoplanet_name = filename_parts[0]
-    R = filename_parts[1]
-    t = filename_parts[2]
-    phase = filename_parts[3]
-    unit = filename_parts[4].split('.')[0]
-    
-    with open(input_dir+filename, 'r') as file:
-        for line in file:
-            if line.startswith("#") or line.strip()=="":
-                continue
-            # each txt file line -> list of strings
-            row = list(map(float, line.split()))
-            data.append(row)
+    # config['GENERATOR-NOISE1'] = read noise
+    # config['GENERATOR-NOISE2'] = dark current
+    # config['GENERATOR-NOISEOEFF'] = throughput (wavelength dependent; see format)
+    # config['GENERATOR-NOISEOEMIS'] = emissivity
+    # config['GENERATOR-NOISEOTEMP'] = temp of telescope/optics [K]
 
-    data = np.array(data)
-    wavelength = data[:,0]          # [microns]
-    radiance_total = data[:,1]      # total radiance [whichever PSG units were chosen]
-    radiance_noise = data[:,2]      # noise
-    radiance_stellar = data[:,3]    # stellar radiance 
-    radiance_exoplanet = data[:,4]  # wasp-127b radiance
-    
-    # if phase=180, define radiance_transit
-    try:
-        phase = int(phase)
-    except ValueError:
-        raise ValueError(f"Invalid phase value in filename: {phase}")
-    
-    if phase == 180:
+
+    # list of things that would be changed
+    config['OBJECT-NAME'] = 'WASP-127b'
+    config['OBJECT-DIAMETER'] = 183307  # [km]
+    config['OBJECT-GRAVITY'] = 3.1264467e26 # mass of object [kg]
+    config['OBJECT-STAR-DISTANCE'] = 0.04840 # semi-major axis [AU]
+    config['OBJECT-STAR-VELOCITY'] = 0.022 # RV amplitude [km/s] (not on archive)
+    config['OBJECT-INCLINATION'] = 87.84
+    config['OBJECT-STAR-TYPE'] = 'G'
+    config['OBJECT-STAR-TEMPERATURE'] = 5828 # [K]
+    config['OBJECT-STAR-RADIUS'] = 0.9228 #  [Rsun]
+    config['OBJECT-SEASON'] = phase # 180: secondary transit. 90: opposition
+    config['GEOMETRY-OBS-ALTITUDE'] = 159.507 # [pc] distance between observer and planet
+    config['GENERATOR-RADUNITS'] = flux_units # 'Wsrm2um': flux units. 'pm': photons measured units
+    config['GENERATOR-NOISETIME'] = 10 # exposure time per frame [s]
+
+
+
+    result = psg.run(config)
+
+
+    # the reply header
+    print('\nPSG reply header:\n' + result['header'])
+
+    # the time in seconds
+    print('\nDuration (seconds):\n' + str(result['duration_seconds']))
+
+
+
+    data = result['spectrum']
+    wavelength = data[:, 0]         # [microns]
+    radiance_total = data[:, 1]     # total radiance [whichever PSG units were chosen]
+    radiance_noise = data[:, 2]     # noise
+    radiance_stellar = data[:, 3]   # stellar radiance
+    radiance_exoplanet = data[:, 4] # exoplanet radiance
+
+    # determine if phase=180 or phase=90 (transit radiance column)
+    if data.shape[1] == 6:
         radiance_transit = data[:, 5]  # transit radiance
     else:
         radiance_transit = None
-    
-    
-    if Plot==True:
-        plt.figure(figsize=(10,6))
-        plt.plot(wavelength, radiance_total, label='Total Radiance', color='blue')
-        plt.plot(wavelength, radiance_stellar, label='Stellar Radiance', color='orange')
-        plt.plot(wavelength, radiance_exoplanet, label='Wasp-127b Radiance', color='green')
-        
-        if radiance_transit is not None:
-            plt.plot(wavelength, radiance_transit, label='Transit Radiance', color='red')
-        
-        plt.plot(wavelength, radiance_noise, label='Noise', color='black')
-                
-        plt.xlabel('Wavelength [µm]')
-        if unit=='photons':
-            plt.ylabel('Flux [photons measured]')
-        elif unit=='flux':
-            plt.ylabel('Flux [W/sr/µm/m^2]')
-        else:
-            plt.ylabel('Flux')
-        plt.title('{} Spectrum (Phase={}, R={}, Exposure time={})'.format(exoplanet_name, phase, R, t))
-        plt.legend()
-        plt.grid(True)
-        plt.savefig(f"{output_dir}plots/{exoplanet_name}_{R}_{t}_{phase}_{unit}.png", dpi=300)
-        plt.show()
-    
+
+
     # create data_array with all PSG data
     if radiance_transit is not None:
         data_array = np.vstack((wavelength, radiance_total, radiance_noise, radiance_stellar, radiance_exoplanet, radiance_transit))
     else:
         data_array = np.vstack((wavelength, radiance_total, radiance_noise, radiance_stellar, radiance_exoplanet))
-        
+    data_array = data_array.T  
+    
     return data_array
 
 def hitran_line_list(hitran_filename):
@@ -114,6 +101,7 @@ def hitran_line_list(hitran_filename):
     --------
     line_list (array-like) - [wavelength (nm), intensity, HWHM]
     """
+    
     path = input_dir + hitran_filename
     with open(path, 'r') as file:
         lines = file.readlines()
@@ -205,24 +193,22 @@ def replace_data_around_lines(data_array, line_centers, line_hwhms, tolerance=0.
 
     return modified_data_array
 
-def filter_spectrum(psg_txt_filename, Plot=False):
+def filter_spectrum(flux_units, phase, Plot=False):
     """
     Processes a PSG spectrum by removing contamination from the top 100 OH emission lines.
     Optionally plots the filtered spectrum and top 100 OH lines.
 
     Parameters:
     -----------
-    psg_txt_filename (str) - path to the PSG spectrum file to process.
-    Plot (bool, optional) - whether to plot the filtered spectrum (default is False).
-
+    
+    
     Returns:
     --------
-    filtered_wavelength (array-like)
-    filtered_radiance (array-like)
+    
     
     Notes:
     --------
-    Calls function read_txt()
+    Calls function call_psg(flux_units, phase)
     Calls function remove_data_around_lines()
     Calls function hitran_line_list()
     """
@@ -234,8 +220,8 @@ def filter_spectrum(psg_txt_filename, Plot=False):
     top_100_wavelengths = np.array([line[0] for line in top_100])
     top_100_hwhm = [line[2] for line in top_100]
 
-    # read in PSG spectra
-    data = read_txt(psg_txt_filename, Plot=False)
+    # call PSG
+    data = call_psg(flux_units, phase, Plot=False)
     modified_data = replace_data_around_lines(data, top_100_wavelengths, top_100_hwhm)
     wavelength = modified_data[0]
     modified_radiance = modified_data[1]
@@ -282,17 +268,13 @@ def calculate_snr_star(star_data):
     snr = signal/noise
     return snr
 
-def calculate_snr_planet(filename, transit_data, star_data, Plot=True):
+def calculate_snr_planet(exoplanet_info, transit_data, star_data, Plot=True):
     """
     Calculates the signal-to-noise ratio (SNR) of a planet.
 
     Parameters:
     -----------
-    filename (string): name of PSG txt file. The filename is expected to follow the format 
-        '<exoplanet_name>_<R>_<t>_[...].txt', where:
-        - <exoplanet_name> is the name of the exoplanet.
-        - <R> is the spectral resolution.
-        - <t> is the exposure time.
+    []
         
     star_data (2D numpy array) - input data array with "photons measured" units.
         - data_array[0] : wavelength values
@@ -320,10 +302,9 @@ def calculate_snr_planet(filename, transit_data, star_data, Plot=True):
     Calls function hitran_line_list()
     """
     
-    filename_parts = filename.split('_')
-    exoplanet_name = filename_parts[0]
-    R = filename_parts[1]
-    t = filename_parts[2]
+    exoplanet_name = exoplanet_info[0]
+    R = exoplanet_info[1]
+    t = exoplanet_info[2]
     
     
     # calculate signal ratio:
@@ -369,18 +350,19 @@ def calculate_snr_planet(filename, transit_data, star_data, Plot=True):
     
     return snr_planet, wavelength
 
-# filenames
-photons_180 = 'WASP127b_30k_10s_180_photons.txt'
-photons_90 = 'WASP127b_30k_10s_90_photons.txt'
-flux_90 = 'WASP127b_30k_10s_90_flux.txt'
+# flux_units='Wsrm2um': flux units
+# flux_units='pm': photons measured units
+# phase=180: secondary transit
+# phase=90: opposition (no transit)
 
-# visually inspect the spectra
-data = read_txt(photons_180)
+# personal sanity check - visually inspect spectra by plotting
+test = call_psg('pm', 180)
 
-# get data arrays + "OH line removal"
-photons_transit_data = filter_spectrum(photons_180,Plot=False)
-photons_star_data = filter_spectrum(photons_90)
+# get data arrays + OH line removal
+photons_180 = filter_spectrum('pm', 180)
+photons_90 = filter_spectrum('pm', 90)
 
-snr_planet, wavelength = calculate_snr_planet(photons_180, photons_transit_data, photons_star_data)
-
+# calculate SNR
+exoplanet_info = ['WASP 127b', 30000, 10]
+snr_planet, wavelength = calculate_snr_planet(photons_180, photons_90)
 
