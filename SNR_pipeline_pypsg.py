@@ -8,6 +8,7 @@ import pypsg
 input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/'
 output_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/outputs/'
 
+
 psg = pypsg.PSG(timeout_seconds=30)
 
 config = psg.default_config
@@ -85,6 +86,32 @@ def call_psg(flux_units, phase, Plot=True):
     else:
         data_array = np.vstack((wavelength, radiance_total, radiance_noise, radiance_stellar, radiance_exoplanet))
     data_array = data_array.T  
+    
+    
+    if Plot==True:
+        plt.figure(figsize=(10,6))
+        plt.plot(wavelength, radiance_total, label='Total Radiance', color='blue')
+        plt.plot(wavelength, radiance_stellar, label='Stellar Radiance', color='orange')
+        plt.plot(wavelength, radiance_exoplanet, label='Wasp-127b Radiance', color='green')
+        
+        if radiance_transit is not None:
+            plt.plot(wavelength, radiance_transit, label='Transit Radiance', color='red')
+        
+        plt.plot(wavelength, radiance_noise, label='Noise', color='black')
+                
+        plt.xlabel('Wavelength [µm]')
+        if flux_units=='pm':
+            plt.ylabel('Flux [photons measured]')
+        elif flux_units=='Wsrm2um':
+            plt.ylabel('Flux [W/sr/µm/m^2]')
+        else:
+            plt.ylabel('Flux')
+        plt.title('{} Spectrum (Phase={}, Exposure time={})'.format(config['OBJECT-NAME'], phase, config['GENERATOR-NOISETIME']))
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(f"{output_dir}plots/{config['OBJECT-NAME']}_{config['GENERATOR-RESOLUTION']}_{config['GENERATOR-NOISETIME']}_{phase}_{flux_units}.png", dpi=300)
+        plt.show()
+    
     
     return data_array
 
@@ -357,12 +384,15 @@ def calculate_snr_planet(exoplanet_info, transit_data, star_data, Plot=True):
 
 # personal sanity check - visually inspect spectra by plotting
 test = call_psg('pm', 180)
+print('made it past test!')
 
 # get data arrays + OH line removal
 photons_180 = filter_spectrum('pm', 180)
+print('made it past photons_180!')
 photons_90 = filter_spectrum('pm', 90)
+print('made it past photons_90!')
 
 # calculate SNR
 exoplanet_info = ['WASP 127b', 30000, 10]
-snr_planet, wavelength = calculate_snr_planet(photons_180, photons_90)
+snr_planet, wavelength = calculate_snr_planet(exoplanet_info, photons_180, photons_90)
 
