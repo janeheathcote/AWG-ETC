@@ -4,8 +4,8 @@ from astropy.io import fits
 import pdb
 
 # DIRECTORY:
-input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/'
-output_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/outputs/'
+input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/AWG-ETC/inputs/'
+output_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/AWG-ETC/outputs/'
 
 
 def read_txt(filename, Plot=True):
@@ -32,7 +32,6 @@ def read_txt(filename, Plot=True):
     data_array (array-like) - contains wavelength, total radiance, stellar radiance,
     exoplanet radiance, and optional transit radiance (if phase=180).
     """
-    input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/'
     data = []
     
     filename_parts = filename.split('_')
@@ -257,32 +256,13 @@ def filter_spectrum(psg_txt_filename, Plot=False):
 
     return modified_data
 
-def calculate_snr_star(star_data):
-    """
-    Reads a PSG txt file (with "photons measured" units) and calculates the signal/noise.
-    
-    Parameters:
-    -----------
-    star_data (2D numpy array) - input data array where:
-        - data_array[0] : wavelength values
-        - data_array[1] : total radiance
-        - data_array[2] : noise
-        - data_array[3] : stellar radiance
-        - data_array[4] : exoplanet radiance
+def read_star_snr_csv(csv_path):
+    data = np.genfromtxt(csv_path, delimiter=',', names=True)
+    wavelengths = data['wavelength_um'] # [microns]
+    snr = data['snr']
+    return wavelengths, snr
 
-    Returns:
-    --------
-    snr_wavelength (array-like) - the wavelength array
-    snr (array-like) - the SNR per spectral resolution element
-    """
-    
-    signal = star_data[1]    # total radiance [photons measured]
-    noise = star_data[2]     # noise [photons measured]
-    
-    snr = signal/noise
-    return snr
-
-def calculate_snr_planet(filename, transit_data, star_data, Plot=True):
+def calculate_snr_planet(filename, transit_data, star_snr_csv, Plot=True):
     """
     Calculates the signal-to-noise ratio (SNR) of a planet.
 
@@ -293,16 +273,15 @@ def calculate_snr_planet(filename, transit_data, star_data, Plot=True):
         - <exoplanet_name> is the name of the exoplanet.
         - <R> is the spectral resolution.
         - <t> is the exposure time.
+    
+    star_snr_csv (str): Path to CSV file from ETC code
         
-    star_data (2D numpy array) - input data array with "photons measured" units.
+    transit_data (2D numpy array) - input data array with "photons measured" units.
         - data_array[0] : wavelength values
         - data_array[1] : total radiance
         - data_array[2] : noise
         - data_array[3] : stellar radiance
         - data_array[4] : exoplanet radiance
-        
-    transit_data (2D numpy array) - input data array with same format as star_data,
-    except with an additional column
         - data_array[5] : transit radiance
     
     Plot (bool): option to plot wavelength vs. planetary SNR. Default is True.
@@ -316,7 +295,7 @@ def calculate_snr_planet(filename, transit_data, star_data, Plot=True):
     --------
     S/N equation from Boldt-Christmas et al. 2024 (Eq 6).
     Calls function read_txt()
-    Calls function calculate_snr_star()
+    Calls function read_star_snr_csv()
     Calls function hitran_line_list()
     """
     
@@ -326,35 +305,36 @@ def calculate_snr_planet(filename, transit_data, star_data, Plot=True):
     t = filename_parts[2]
     
     
-    # calculate signal ratio:
+    # ----- calculate signal ratio -----
     s_p = transit_data[5] * (-1)
     s_star = transit_data[3]
     
 
-    # calculate SNR of star:
-    snr_star = calculate_snr_star(star_data)
-    wavelength = star_data[0]
+    # ----- calculate SNR of star -----
+    snr_wavelength, snr_star = read_star_snr_csv(star_snr_csv)
+    wavelength = transit_data[0]
+
+    # Interpolate star SNR onto the wavelength grid of your data if needed
+    snr_star_interp = np.interp(wavelength, snr_wavelength, snr_star)
     
 
-    # calculate N_lines:
-    
-    # process HITRAN line list
-    line_list = hitran_line_list('top_lines.out')
+    # ----- calculate N_lines -----
+    line_list = hitran_line_list('top_lines.out') # process HITRAN line list
     
     # sort line list by intensity (descending order)
     top_100 = sorted(line_list, key=lambda x: x[1], reverse=True)[:100]
     top_100_intensities = [line[1] for line in top_100]
-    
     # normalize intensities
-    max_intensity = max(top_100_intensities)
+    max_intensity = max(top_100_intensities)     
     normalized_intensity = [i / max_intensity for i in top_100_intensities]
-
+    
     # N_lines = summation of normalized intensities
-    N_lines = sum(normalized_intensity)
+    N_lines = sum(normalized_intensity)     
 
 
-    # SNR EQUATION:
-    snr_planet = (s_p/s_star) * snr_star * np.sqrt(N_lines)
+
+    # ----- SNR EQUATION -----
+    snr_planet = (s_p/s_star) * snr_star_interp * np.sqrt(N_lines)
     
     if Plot:
         plt.figure(figsize=(10, 6))
@@ -381,6 +361,10 @@ data = read_txt(photons_180)
 photons_transit_data = filter_spectrum(photons_180,Plot=False)
 photons_star_data = filter_spectrum(photons_90)
 
-snr_planet, wavelength = calculate_snr_planet(photons_180, photons_transit_data, photons_star_data)
+# get star S/N calculation from ETC code
+snr_path = output_dir + 'WASP127b_30k_10s_180_Jy_snr.csv'
+
+snr_planet, wavelength = calculate_snr_planet(photons_180, photons_transit_data, snr_path)
+
 
 

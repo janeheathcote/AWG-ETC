@@ -6,8 +6,8 @@ import pandas as pd
 
 
 # set directory
-directory = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/'
-kate_input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/kate/'
+input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/AWG-ETC/inputs/'
+output_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/AWG-ETC/outputs/'
 
 # FILE NAMES:
 injection_fn = 'Scaled_efficiency.csv'     # 1000-1376 nm
@@ -15,7 +15,6 @@ pl_smf_fn = 'W_vs_PT_1cmleadin.csv'        # 1000-1400 nm
 chip_fn = 'Converted_Transmission.csv'   # 1200-1642 nm
 chip_fsr_fn = 'SiO2_refractive_index.csv'   # 0-3 microns
 name = r'WASP127b_30k_10s_180_Jy'
-#name = 'mars'
 
 # read in PSG file:
 def read_txt(filename):
@@ -33,7 +32,6 @@ def read_txt(filename):
     wavelength (array-like) - wavelength values [µm].
     radiance_total (array-like) - total radiance values.
     """
-    input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/'
     data = []
     
     filename_parts = filename.split('_')
@@ -78,7 +76,7 @@ teff = 5828 # [K], PSG WASP127b specific value
 
 
 # ------ INJECTION ------ 
-injection_data = pd.read_csv(kate_input_dir + injection_fn) # 77 data points
+injection_data = pd.read_csv(input_dir + injection_fn) # 77 data points
 injection_wl = np.array(injection_data['Wavelength (nm)'].tolist())* (1e-7)  # [nm] -> [cm]
 injection_eff = np.array(injection_data['Efficiency (%)'].tolist())
 # interpolation
@@ -89,7 +87,7 @@ injection_transmission = linear_interp(x)
 
 
 # ------ PL TO SMF ------ 
-pl_smf_data = pd.read_csv(kate_input_dir + pl_smf_fn) # 78 data points
+pl_smf_data = pd.read_csv(input_dir + pl_smf_fn) # 78 data points
 pl_smf_wl = np.array(pl_smf_data['Wavelength'].tolist())* (1e-7)  # [nm] -> [cm]
 pl_smf_thru = np.array(pl_smf_data['Photonic Throughput'].tolist())
 # interpolation
@@ -99,7 +97,7 @@ PLSMF_transmission = linear_interp(x)
 
 
 # ------ ON CHIP ------ 
-chip_data = pd.read_csv(kate_input_dir + chip_fn) # 77 data points
+chip_data = pd.read_csv(input_dir + chip_fn) # 77 data points
 chip_wl = np.array(chip_data['Wavelength (nm)'].tolist())* (1e-7)  # [nm] -> [cm]
 chip_eff = np.array(chip_data['Transmission (Power Ratio)'].tolist())
 # interpolation
@@ -109,7 +107,7 @@ onchip_transmission = linear_interp(x)
 
 
 # ------ CHIP TO FREE SPACE ------ 
-chip_fsr_data = pd.read_csv(kate_input_dir + chip_fsr_fn)
+chip_fsr_data = pd.read_csv(input_dir + chip_fsr_fn)
 chip_fsr_wl = np.array(chip_fsr_data['Wavelength (um)'].tolist())* (1e-4)  # [um] -> [cm]
 chip_fsr_n =  np.array(chip_fsr_data['Refractive Index'].tolist())
 
@@ -199,4 +197,5 @@ plt.grid(True)
 plt.title('SNR vs. Wavelength')
 plt.show() 
 
-
+# SAVE SNR
+np.savetxt(output_dir+name+'_snr.csv', np.column_stack((x*1e4, snr)), delimiter=',', header='wavelength_um,snr', comments='')
