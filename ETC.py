@@ -198,4 +198,4 @@ plt.title('SNR vs. Wavelength')
 plt.show() 
 
 # SAVE SNR
-np.savetxt(output_dir+name+'_snr.csv', np.column_stack((x*1e4, snr)), delimiter=',', header='wavelength_um,snr', comments='')
+np.savetxt(output_dir+name+'_snr.csv', np.column_stack((x*1e-4, snr)), delimiter=',', header='wavelength_um,snr', comments='')

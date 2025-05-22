@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
+from scipy.interpolate import interp1d
 import pdb
 
 # DIRECTORY:
@@ -8,7 +9,7 @@ input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/AWG-ETC/inputs/'
 output_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/AWG-ETC/outputs/'
 
 
-def read_txt(filename, Plot=True):
+def read_txt(filename, Plot=False):
     """
     Reads a PSG spectrum text file, extracts wavelength and radiance data, and optionally plots the spectrum.
 
@@ -313,10 +314,15 @@ def calculate_snr_planet(filename, transit_data, star_snr_csv, Plot=True):
     # ----- calculate SNR of star -----
     snr_wavelength, snr_star = read_star_snr_csv(star_snr_csv)
     wavelength = transit_data[0]
+    
+    print('snr_star: ', snr_star)
 
     # Interpolate star SNR onto the wavelength grid of your data if needed
-    snr_star_interp = np.interp(wavelength, snr_wavelength, snr_star)
+    interp_map = interp1d(snr_wavelength, snr_star, kind='linear')
+    snr_star_interp = interp_map(wavelength)
     
+    print('interpolated snr_star: ', snr_star_interp)
+
 
     # ----- calculate N_lines -----
     line_list = hitran_line_list('top_lines.out') # process HITRAN line list
@@ -330,7 +336,6 @@ def calculate_snr_planet(filename, transit_data, star_snr_csv, Plot=True):
     
     # N_lines = summation of normalized intensities
     N_lines = sum(normalized_intensity)     
-
 
 
     # ----- SNR EQUATION -----
@@ -358,8 +363,9 @@ flux_90 = 'WASP127b_30k_10s_90_flux.txt'
 data = read_txt(photons_180)
 
 # get data arrays + "OH line removal"
-photons_transit_data = filter_spectrum(photons_180,Plot=False)
-photons_star_data = filter_spectrum(photons_90)
+photons_star_data = filter_spectrum(photons_90, Plot=False)
+photons_transit_data = filter_spectrum(photons_180, Plot=False)
+
 
 # get star S/N calculation from ETC code
 snr_path = output_dir + 'WASP127b_30k_10s_180_Jy_snr.csv'
