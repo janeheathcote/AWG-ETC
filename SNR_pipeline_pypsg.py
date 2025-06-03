@@ -1,21 +1,71 @@
+import os
+import pickle
+import hashlib
+import time
 import matplotlib.pyplot as plt
 import numpy as np
-from astropy.io import fits
-import pdb
+from scipy.interpolate import interp1d
 import pypsg
+import pdb
 
 # DIRECTORY:
 input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/'
 output_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/outputs/'
 
 
-psg = pypsg.PSG(timeout_seconds=30)
+psg = pypsg.PSG(timeout_seconds=120)
 
-config = psg.default_config
 
-def call_psg(flux_units, phase, Plot=True):
 
-    # list of things that would be set
+def get_cache_key(config):
+    """
+    Generate a unique hash key for the PSG config parameters.
+    """
+    
+    # parameters: exoplanet name, wavelength, resolution, exposure time, phase, & output units
+    relevant_keys = [
+        'OBJECT-NAME', 'GENERATOR-RANGE1', 'GENERATOR-RANGE2', 'GENERATOR-RESOLUTION',
+        'GENERATOR-NOISETIME', 'OBJECT-SEASON', 'GENERATOR-RADUNITS'
+    ]
+    key_str = "_".join([str(config.get(k, '')) for k in relevant_keys])
+    
+    return hashlib.md5(key_str.encode()).hexdigest()
+
+def cleanup_cache(cache_dir, max_age_days=7):
+    """
+    Remove cache files older than max_age_days.
+    """
+    if not os.path.exists(cache_dir):
+        return
+    now = time.time()
+    for filename in os.listdir(cache_dir):
+        filepath = os.path.join(cache_dir, filename)
+        if os.path.isfile(filepath):
+            file_age_days = (now - os.path.getmtime(filepath)) / 86400
+            if file_age_days > max_age_days:
+                os.remove(filepath)
+                print(f"Removed old cache file: {filename}")
+
+
+def call_psg(flux_units, phase, Plot=True, cache_dir=None, cleanup=True, max_cache_age_days=7):
+    """
+    Calls PSG using pypsg package. Loads cached result if available, otherwise calls the API and caches result.
+    Optionally cleans up old cache files.
+    """
+    
+    if cache_dir is None:
+        cache_dir = os.path.join(output_dir, 'psg_cache')
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+
+    # optional: clean up cache files older than 1 week
+    """ if cleanup:
+        cleanup_cache(cache_dir, max_age_days=max_cache_age_days)
+    """
+    
+    config = psg.default_config.copy()
+    
+    # set parameters
     config['OBJECT'] = 'Exoplanet'
     config['OBJECT-GRAVITY-UNIT'] = 'kg'
     config['GEOMETRY'] = 'Observatory'
@@ -30,64 +80,88 @@ def call_psg(flux_units, phase, Plot=True):
     config['GENERATOR-NOISEFRAMES'] = 20
     config['GENERATOR-NOISE'] = 'CCD'
     config['GEOMETRY-ALTITUDE-UNIT'] = 'pc'
-
-    # config['GENERATOR-NOISE1'] = read noise
-    # config['GENERATOR-NOISE2'] = dark current
-    # config['GENERATOR-NOISEOEFF'] = throughput (wavelength dependent; see format)
-    # config['GENERATOR-NOISEOEMIS'] = emissivity
-    # config['GENERATOR-NOISEOTEMP'] = temp of telescope/optics [K]
-
-
-    # list of things that would be changed
+    
+    
+    # list of parameters that user would change
     config['OBJECT-NAME'] = 'WASP-127b'
     config['OBJECT-DIAMETER'] = 183307  # [km]
     config['OBJECT-GRAVITY'] = 3.1264467e26 # mass of object [kg]
     config['OBJECT-STAR-DISTANCE'] = 0.04840 # semi-major axis [AU]
-    config['OBJECT-STAR-VELOCITY'] = 0.022 # RV amplitude [km/s] (not on archive)
+    config['OBJECT-STAR-VELOCITY'] = 0.022 # RV amplitude [km/s]
     config['OBJECT-INCLINATION'] = 87.84
     config['OBJECT-STAR-TYPE'] = 'G'
     config['OBJECT-STAR-TEMPERATURE'] = 5828 # [K]
     config['OBJECT-STAR-RADIUS'] = 0.9228 #  [Rsun]
     config['OBJECT-SEASON'] = phase # 180: secondary transit. 90: opposition
-    config['GEOMETRY-OBS-ALTITUDE'] = 159.507 # [pc] distance between observer and planet
-    config['GENERATOR-RADUNITS'] = flux_units # 'Wsrm2um': flux units. 'pm': photons measured units
+    config['GEOMETRY-OBS-ALTITUDE'] = 159.507 # [pc]
+    config['GENERATOR-RADUNITS'] = flux_units # 'Wsrm2um' or 'pm'
     config['GENERATOR-NOISETIME'] = 10 # exposure time per frame [s]
 
+    # generate cache key and path
+    cache_key = get_cache_key(config)
+    cache_path = os.path.join(cache_dir, f"{cache_key}.pkl")
 
-
-    result = psg.run(config)
-
-
-    # the reply header
-    print('\nPSG reply header:\n' + result['header'])
-
-    # the time in seconds
-    print('\nDuration (seconds):\n' + str(result['duration_seconds']))
-
-
-
-    data = result['spectrum']
-    wavelength = data[:, 0]         # [microns]
-    radiance_total = data[:, 1]     # total radiance [whichever PSG units were chosen]
-    radiance_noise = data[:, 2]     # noise
-    radiance_stellar = data[:, 3]   # stellar radiance
-    radiance_exoplanet = data[:, 4] # exoplanet radiance
-
-    # determine if phase=180 or phase=90 (transit radiance column)
-    if data.shape[1] == 6:
-        radiance_transit = data[:, 5]  # transit radiance
+    # check if result is cached
+    if os.path.exists(cache_path):
+        print("Loading PSG result from cache...")
+        with open(cache_path, 'rb') as f:
+            data_array = pickle.load(f)
     else:
-        radiance_transit = None
+        # call PSG API
+        print("Calling PSG API...")
+        result = psg.run(config)
+        
+        
+        
+        
+        # --------- DEBUGGING -------------
+        print("First 5 lines of PSG spectrum data:")
+        if isinstance(result['spectrum'], np.ndarray):
+            print(result['spectrum'][:5])
+        else:
+            print(result['spectrum'][:500])  # print a snippet if it's a string
+
+        # check for non-numeric or error response
+        if not isinstance(result['spectrum'], np.ndarray):
+            print("PSG returned a non-numeric response or error message:")
+            print(result['spectrum'])
+            raise RuntimeError("PSG did not return numeric data. Check server status or your request parameters.")
+       # ------------------------------------ 
+        
+        
+        
+        
+        
+        print('\nDuration (seconds):\n' + str(result['duration_seconds']))
+        
+        data = result['spectrum']
+        wavelength = data[:, 0]
+        radiance_total = data[:, 1]
+        radiance_noise = data[:, 2]
+        radiance_stellar = data[:, 3]
+        radiance_exoplanet = data[:, 4]
+        
+        # determine if phase=180 or phase=90 (transit radiance column)
+        if data.shape[1] == 6:
+            radiance_transit = data[:, 5]
+        else:
+            radiance_transit = None
+            
+            
+        # create data_array with all PSG data   
+        if radiance_transit is not None:
+            data_array = np.vstack((wavelength, radiance_total, radiance_noise, radiance_stellar, radiance_exoplanet, radiance_transit))
+        else:
+            data_array = np.vstack((wavelength, radiance_total, radiance_noise, radiance_stellar, radiance_exoplanet))
+        
+        data_array = data_array.T
+        
+        # save to cache
+        with open(cache_path, 'wb') as f:
+            pickle.dump(data_array, f)
 
 
-    # create data_array with all PSG data
-    if radiance_transit is not None:
-        data_array = np.vstack((wavelength, radiance_total, radiance_noise, radiance_stellar, radiance_exoplanet, radiance_transit))
-    else:
-        data_array = np.vstack((wavelength, radiance_total, radiance_noise, radiance_stellar, radiance_exoplanet))
-    data_array = data_array.T  
-    
-    
+    # PLOT (optional)
     if Plot==True:
         plt.figure(figsize=(10,6))
         plt.plot(wavelength, radiance_total, label='Total Radiance', color='blue')
@@ -111,9 +185,12 @@ def call_psg(flux_units, phase, Plot=True):
         plt.grid(True)
         plt.savefig(f"{output_dir}plots/{config['OBJECT-NAME']}_{config['GENERATOR-RESOLUTION']}_{config['GENERATOR-NOISETIME']}_{phase}_{flux_units}.png", dpi=300)
         plt.show()
-    
-    
+        
+        
+  
+
     return data_array
+
 
 def hitran_line_list(hitran_filename):
     """
@@ -270,32 +347,13 @@ def filter_spectrum(flux_units, phase, Plot=False):
 
     return modified_data
 
-def calculate_snr_star(star_data):
-    """
-    Reads a PSG txt file (with "photons measured" units) and calculates the signal/noise.
-    
-    Parameters:
-    -----------
-    star_data (2D numpy array) - input data array where:
-        - data_array[0] : wavelength values
-        - data_array[1] : total radiance
-        - data_array[2] : noise
-        - data_array[3] : stellar radiance
-        - data_array[4] : exoplanet radiance
+def read_star_snr_csv(csv_path):
+    data = np.genfromtxt(csv_path, delimiter=',', names=True)
+    wavelengths = data['wavelength_um'] # [microns]
+    snr = data['snr']
+    return wavelengths, snr
 
-    Returns:
-    --------
-    snr_wavelength (array-like) - the wavelength array
-    snr (array-like) - the SNR per spectral resolution element
-    """
-    
-    signal = star_data[1]    # total radiance [photons measured]
-    noise = star_data[2]     # noise [photons measured]
-    
-    snr = signal/noise
-    return snr
-
-def calculate_snr_planet(exoplanet_info, transit_data, star_data, Plot=True):
+def calculate_snr_planet(exoplanet_info, transit_data, star_snr_csv, Plot=True):
     """
     Calculates the signal-to-noise ratio (SNR) of a planet.
 
@@ -334,19 +392,24 @@ def calculate_snr_planet(exoplanet_info, transit_data, star_data, Plot=True):
     t = exoplanet_info[2]
     
     
-    # calculate signal ratio:
-    s_p = transit_data[5] * (-1)
-    s_star = transit_data[3]
+    # ----- calculate signal ratio -----
+    s_p = transit_data[:,5] * (-1)
+    s_star = transit_data[:,3]
     
 
-    # calculate SNR of star:
-    snr_star = calculate_snr_star(star_data)
-    wavelength = star_data[0]
+    # ----- calculate SNR of star -----
+    snr_wavelength, snr_star = read_star_snr_csv(star_snr_csv)
+    wavelength = transit_data[:,0]
+    print('snr_star: ', snr_star)
+
+    # Interpolate star SNR onto the wavelength grid of your data if needed
+    interp_map = interp1d(snr_wavelength, snr_star, kind='linear', fill_value="extrapolate")
+    snr_star_interp = interp_map(wavelength)
+    print('interpolated snr_star: ', snr_star_interp)
     
 
-    # calculate N_lines:
-    
-    # process HITRAN line list
+
+    # ----- calculate N_lines -----
     line_list = hitran_line_list('top_lines.out')
     
     # sort line list by intensity (descending order)
@@ -361,8 +424,9 @@ def calculate_snr_planet(exoplanet_info, transit_data, star_data, Plot=True):
     N_lines = sum(normalized_intensity)
 
 
-    # SNR EQUATION:
-    snr_planet = (s_p/s_star) * snr_star * np.sqrt(N_lines)
+
+    # ----- SNR EQUATION -----
+    snr_planet = (s_p/s_star) * snr_star_interp * np.sqrt(N_lines)
     
     if Plot:
         plt.figure(figsize=(10, 6))
@@ -377,22 +441,32 @@ def calculate_snr_planet(exoplanet_info, transit_data, star_data, Plot=True):
     
     return snr_planet, wavelength
 
+
+
+
+
+
+
+
+
 # flux_units='Wsrm2um': flux units
 # flux_units='pm': photons measured units
 # phase=180: secondary transit
 # phase=90: opposition (no transit)
 
 # personal sanity check - visually inspect spectra by plotting
-test = call_psg('pm', 180)
-print('made it past test!')
+#test = call_psg('pm', 180)
+#print('made it past test!')
 
 # get data arrays + OH line removal
 photons_180 = filter_spectrum('pm', 180)
 print('made it past photons_180!')
-photons_90 = filter_spectrum('pm', 90)
-print('made it past photons_90!')
 
-# calculate SNR
+# get star S/N calculation from ETC code
+snr_path = output_dir + 'WASP127b_30k_10s_180_Jy_snr.csv'
+
+
+# calculate planetary SNR
 exoplanet_info = ['WASP 127b', 30000, 10]
-snr_planet, wavelength = calculate_snr_planet(exoplanet_info, photons_180, photons_90)
+snr_planet, wavelength = calculate_snr_planet(exoplanet_info, photons_180, snr_path)
 
