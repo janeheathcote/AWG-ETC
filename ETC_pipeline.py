@@ -10,8 +10,8 @@ import pypsg
 import pdb
 
 # DIRECTORY:
-input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/inputs/'
-output_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/outputs/'
+input_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/AWG-ETC/inputs/'
+output_dir = r'C:/Users/janee/Documents/Astrophotonics/ETC/AWG-ETC/outputs/'
 
 psg = pypsg.PSG(timeout_seconds=120)
 
@@ -22,6 +22,7 @@ def get_cache_key(config):
     """
     Generate a unique hash key for the PSG config parameters.
     """
+    
     relevant_keys = [
         'OBJECT-NAME', 'GENERATOR-RANGE1', 'GENERATOR-RANGE2', 'GENERATOR-RESOLUTION',
         'GENERATOR-NOISETIME', 'OBJECT-SEASON', 'GENERATOR-RADUNITS'
@@ -45,11 +46,10 @@ def cleanup_cache(cache_dir, max_age_days=7):
                 os.remove(filepath)
                 print(f"Removed old cache file: {filename}")
 
-
-
 def call_psg(flux_units, phase, Plot=True, cache_dir=None, cleanup=False, max_cache_age_days=7):
     """
     Calls PSG using pypsg package. Loads cached result if available, otherwise calls the API and caches result.
+    Returns filtered wavelength/transit data.
     """
     
     if cache_dir is None:
@@ -148,17 +148,22 @@ def call_psg(flux_units, phase, Plot=True, cache_dir=None, cleanup=False, max_ca
         # save to cache
         with open(cache_path, 'wb') as f:
             pickle.dump(data_array, f)
-            
+     
+    
+    # filter top 100 OH emission regions
+    filtered_data = filter_spectrum(data_array)
+
+        
             
     # PLOT (optional)            
     if Plot:
         plt.figure(figsize=(10,6))
-        plt.plot(data_array[:,0], data_array[:,1], label='Total Radiance', color='blue')
-        plt.plot(data_array[:,0], data_array[:,3], label='Stellar Radiance', color='orange')
-        plt.plot(data_array[:,0], data_array[:,4], label='Wasp-127b Radiance', color='green')
-        plt.plot(data_array[:,0], data_array[:,2], label='Noise', color='black')
+        plt.plot(filtered_data[:,0], filtered_data[:,1], label='Total Radiance', color='blue')
+        plt.plot(filtered_data[:,0], filtered_data[:,3], label='Stellar Radiance', color='orange')
+        plt.plot(filtered_data[:,0], filtered_data[:,4], label='Wasp-127b Radiance', color='green')
+        plt.plot(filtered_data[:,0], filtered_data[:,2], label='Noise', color='black')
         if data_array.shape[1] > 5:
-            plt.plot(data_array[:,0], data_array[:,5], label='Transit Radiance', color='red')        
+            plt.plot(filtered_data[:,0], filtered_data[:,5], label='Transit Radiance', color='red')        
         
         plt.xlabel('Wavelength [µm]')
         if flux_units=='pm':
@@ -173,7 +178,7 @@ def call_psg(flux_units, phase, Plot=True, cache_dir=None, cleanup=False, max_ca
         plt.savefig(f"{output_dir}plots/{config['OBJECT-NAME']}_{config['GENERATOR-RESOLUTION']}_{config['GENERATOR-NOISETIME']}_{phase}_{flux_units}.png", dpi=300)
         plt.show()
         
-    return data_array
+    return filtered_data
 
 
 # return wavelength, snr
@@ -185,6 +190,7 @@ def exposure_time_calculator(t):
     chip_fsr_fn = 'SiO2_refractive_index.csv'   # 0-3 microns
     
     
+    print('Calling PSG for stellar data.')
     etc_data = call_psg('Jy', 90, Plot=False)
     
     wavelength_data = etc_data[:,0]   # [microns]
@@ -193,6 +199,7 @@ def exposure_time_calculator(t):
     
     spectrum_data = (stellar_flux * (3e-5)) / ((wavelength_data*(1e4))**2)  # Jy -> [erg/s/cm^2/A]
     spectrum_data = spectrum_data/(1e-8)                               # [erg/s/cm^2/A] -> [erg/s/cm^2/cm]
+    wavelength_data = wavelength_data * (1e-4)   # [micron] -> [cm]
 
     
     # set constants
@@ -204,9 +211,8 @@ def exposure_time_calculator(t):
     injection_data = pd.read_csv(input_dir + injection_fn) # 77 data points
     injection_wl = np.array(injection_data['Wavelength (nm)'].tolist())* (1e-7)  # [nm] -> [cm]
     injection_eff = np.array(injection_data['Efficiency (%)'].tolist())
-    x = np.linspace(1200*(1e-7), 1700*(1e-7), 10345) # [cm]
     linear_interp = interp1d(injection_wl, injection_eff, kind='linear', fill_value='extrapolate')
-    injection_transmission = linear_interp(x)
+    injection_transmission = linear_interp(wavelength_data)
 
 
     # ------ PL TO SMF ------ 
@@ -214,7 +220,7 @@ def exposure_time_calculator(t):
     pl_smf_wl = np.array(pl_smf_data['Wavelength'].tolist())* (1e-7)  # [nm] -> [cm]
     pl_smf_thru = np.array(pl_smf_data['Photonic Throughput'].tolist())
     linear_interp = interp1d(pl_smf_wl, pl_smf_thru, kind='linear', fill_value='extrapolate')
-    PLSMF_transmission = linear_interp(x)
+    PLSMF_transmission = linear_interp(wavelength_data)
 
 
     # ------ ON CHIP ------ 
@@ -222,7 +228,7 @@ def exposure_time_calculator(t):
     chip_wl = np.array(chip_data['Wavelength (nm)'].tolist())* (1e-7)  # [nm] -> [cm]
     chip_eff = np.array(chip_data['Transmission (Power Ratio)'].tolist())
     linear_interp = interp1d(chip_wl, chip_eff, kind='linear', fill_value='extrapolate')
-    onchip_transmission = linear_interp(x)
+    onchip_transmission = linear_interp(wavelength_data)
 
 
     # ------ CHIP TO FREE SPACE ------ 
@@ -236,7 +242,7 @@ def exposure_time_calculator(t):
     chip_fsr_R = ((n_1 - n_2)/(n_1 + n_2))**2
     chip_fsr_T = 1 - chip_fsr_R  # 58 data points
     linear_interp = interp1d(chip_fsr_wl, chip_fsr_T, kind='linear', fill_value='extrapolate')
-    chipFSR_transmission = linear_interp(x)
+    chipFSR_transmission = linear_interp(wavelength_data)
 
 
     # ------ OTHERS: ------ 
@@ -249,11 +255,10 @@ def exposure_time_calculator(t):
 
 
     A_T = 7.854e5 # total light collecting area (D=10m) [cm^2] 
-    E_ph = (h*c)/(wavelength) # energy per photon [ergs]
+    E_ph = (h*c)/(wavelength_data) # energy per photon [ergs]
     K_0 = (total_transmission*A_T)/(E_ph) # K_0 term defined for simplicity
-    wavelength = x
     resolving_power = 30000 # [dimensionless]
-    delta_lambda = (wavelength)/resolving_power # [cm]
+    delta_lambda = (wavelength_data)/resolving_power # [cm]
 
 
     # total signal
@@ -264,7 +269,7 @@ def exposure_time_calculator(t):
     n_pix = 2 # total number of pixels used in measuring flux
     readout_noise = 100/QE_efficiency
     dark_current =  15/QE_efficiency
-    sky_background = (2.1) * 1e-23 * (c/(x)**2) #[Jy per arcsecond^2] -> [cgs per arcsecond^2]
+    sky_background = (2.1) * 1e-23 * (c/(wavelength_data)**2) #[Jy per arcsecond^2] -> [cgs per arcsecond^2]
 
 
     # total noise
@@ -275,7 +280,7 @@ def exposure_time_calculator(t):
     # S/N
     snr = signal/noise
 
-    plt.plot(wavelength*1e7, snr)
+    plt.plot(wavelength_data*1e7, snr)
     plt.xlabel('Wavelength (nm)')
     plt.ylabel('S/N')
     plt.grid(True)
@@ -284,12 +289,7 @@ def exposure_time_calculator(t):
     
     
     
-    return wavelength, snr
-
-
-
-
-
+    return wavelength_data, snr
 
 
 def hitran_line_list(hitran_filename):
@@ -364,6 +364,8 @@ def replace_data_around_lines(data_array, line_centers, line_hwhms, tolerance=0.
       are replaced with the average radiance of the nearest points outside the range.
     """
 
+    print('Replacing data around lines now.')
+
     # make a copy to avoid modifying original
     modified_data_array = data_array.copy()
     wavelength = data_array[0]
@@ -397,25 +399,19 @@ def replace_data_around_lines(data_array, line_centers, line_hwhms, tolerance=0.
 
     return modified_data_array
 
-def filter_spectrum(flux_units, phase, Plot=False):
+def filter_spectrum(data, Plot=False):
+    
     """
     Processes a PSG spectrum by removing contamination from the top 100 OH emission lines.
     Optionally plots the filtered spectrum and top 100 OH lines.
-
-    Parameters:
-    -----------
-    
-    
-    Returns:
-    --------
-    
     
     Notes:
     --------
-    Calls function call_psg(flux_units, phase)
     Calls function remove_data_around_lines()
     Calls function hitran_line_list()
     """
+    
+    print('Starting filter spectrum process.')
     
     line_list = hitran_line_list(r'OH_list.out')
     
@@ -424,8 +420,7 @@ def filter_spectrum(flux_units, phase, Plot=False):
     top_100_wavelengths = np.array([line[0] for line in top_100])
     top_100_hwhm = [line[2] for line in top_100]
 
-    # call PSG
-    data = call_psg(flux_units, phase, Plot=False)
+    # modify PSG data array
     modified_data = replace_data_around_lines(data, top_100_wavelengths, top_100_hwhm)
     wavelength = modified_data[0]
     modified_radiance = modified_data[1]
@@ -445,9 +440,10 @@ def filter_spectrum(flux_units, phase, Plot=False):
         plt.grid()
         plt.show()
 
+
+    print('Spectrum now filtered!')
+
     return modified_data
-
-
 
 
 def calculate_planet_snr(exoplanet_info, snr_wavelength, snr_star, Plot=True):
@@ -456,6 +452,7 @@ def calculate_planet_snr(exoplanet_info, snr_wavelength, snr_star, Plot=True):
     R = exoplanet_info[1]
     t = exoplanet_info[2]
     
+    print('Calling PSG for planet data.')
     planet_data = call_psg('pm', 180, Plot=False)
     
     # ----- calculate signal ratio -----
@@ -463,8 +460,9 @@ def calculate_planet_snr(exoplanet_info, snr_wavelength, snr_star, Plot=True):
     s_star = planet_data[:,3]
     wavelength = planet_data[:,0]
     
+    
     # interpolate star SNR onto the wavelength grid of your PSG data
-    interp_map = interp1d(snr_wavelength, snr_star, kind='linear', fill_value="extrapolate")
+    interp_map = interp1d(snr_wavelength*(1e4), snr_star, kind='linear', fill_value="extrapolate")
     snr_star_interp = interp_map(wavelength)
     
     # ----- calculate N_lines -----
@@ -484,6 +482,7 @@ def calculate_planet_snr(exoplanet_info, snr_wavelength, snr_star, Plot=True):
 
     # ----- SNR EQUATION -----
     snr_planet = (s_p/s_star) * snr_star_interp * np.sqrt(N_lines)
+
     
     
     if Plot:
@@ -506,22 +505,16 @@ def calculate_planet_snr(exoplanet_info, snr_wavelength, snr_star, Plot=True):
 
 
 
-
-
-
-
 if __name__ == "__main__":
     
     exposure_time = 10 # [s]
     
     # ETC S/N calculation
-    etc_wavelength, etc_flux = exposure_time_calculator(exposure_time)
-    print("ETC- wavelength (um):", etc_wavelength[:5])
-    print("ETC- stellar flux (Jy):", etc_flux[:5])
+    etc_wavelength, etc_snr = exposure_time_calculator(exposure_time)
 
     # Planet S/N calculation
     exoplanet = ['WASP-127b', 30000, exposure_time]
-    planet_data = calculate_planet_snr(exoplanet, etc_wavelength, etc_flux)
+    planet_data = calculate_planet_snr(exoplanet, etc_wavelength, etc_snr)
 
    
    
