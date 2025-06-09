@@ -7,7 +7,8 @@ Key Features:
 
     Exposure Time Calculator (ETC): Calculates the required exposure time and signal-to-noise ratio (S/N) for a given observation scenario.
 
-    Remote PSG Integration: Uses the [pypsg package](https://gitlab.com/frontierdevelopmentlab/astrobiology/pypsg) to remotely call NASA's Planetary Spectrum Generator (PSG) for generating stellar and transit spectra. Results are cached for efficiency.
+    Remote PSG Integration: Uses the [pypsg package](https://gitlab.com/frontierdevelopmentlab/astrobiology/pypsg) to remotely call
+    NASA's Planetary Spectrum Generator (PSG) for generating stellar and transit spectra. Results are cached for efficiency.
 
     Planetary S/N Calculation: Computes planetary signal-to-noise using a dedicated equation.
 
