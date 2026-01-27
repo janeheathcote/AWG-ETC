@@ -1,7 +1,6 @@
 # ETC_pipeline.py
 
-Summary:
-This script is a comprehensive pipeline for simulating and analyzing the performance of an AWG (Arrayed Waveguide Grating) spectrograph, specifically for exoplanet transit observations. It includes an Exposure Time Calculator (ETC) and additional tools for end-to-end calculation of planetary S/N.
+This code is a comprehensive pipeline for simulating and analyzing the performance of an AWG (Arrayed Waveguide Grating) spectrograph, specifically for exoplanet transit observations. It includes an Exposure Time Calculator (ETC) and additional tools for end-to-end calculation of planetary S/N.
 
 Utilizes the [pypsg package](https://gitlab.com/frontierdevelopmentlab/astrobiology/pypsg) for remotely calling NASA's [Planetary Spectrum Generator (PSG)](https://psg.gsfc.nasa.gov/).
 
